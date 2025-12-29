@@ -2,6 +2,7 @@ import os
 import secrets
 import httpx
 import asyncio
+import getpass
 from typing import Annotated
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -10,10 +11,20 @@ from mcp.server.sse import SseServerTransport
 import mcp.types as types
 from contextlib import asynccontextmanager
 
-# --- 配置区 ---
+# --- 配置初始化 (改为启动时手动输入) ---
+print("=== MCP 服务器安全初始化 ===")
+DEFAULT_USER = "admin"
+# 获取用户名
+API_USERNAME = input(f"请输入认证用户名 (默认: {DEFAULT_USER}): ") or DEFAULT_USER
+# 安全获取密码 (输入时不会显示字符)
+API_PASSWORD = getpass.getpass("请输入认证密码: ")
+
+if not API_PASSWORD:
+    print("错误: 必须设置密码才能启动服务器。")
+    exit(1)
+
+# 心知天气 API 配置
 SENIVERSE_API_KEY = "SEfimV0EAFJ9r7Iro"
-API_USERNAME = "admin"
-API_PASSWORD = "admin123"
 
 # --- MCP 服务器核心逻辑 ---
 mcp_server = Server("weather-service")
@@ -63,14 +74,12 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[types.Text
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 在后台启动 MCP 服务器运行循环
     async def _run_server():
         async with mcp_server.run(
             sse_transport.connect_scope(),
             mcp_server.options,
             raise_on_error=False
         ):
-            # 保持循环直到应用关闭
             await asyncio.Event().wait()
     
     task = asyncio.create_task(_run_server())
@@ -93,20 +102,18 @@ def authenticate(credentials: Annotated[HTTPBasicCredentials, Depends(security)]
 
 @app.get("/")
 async def root():
-    """健康检查接口"""
     return {"status": "ok", "message": "Weather MCP Server is running"}
 
 @app.get("/sse")
 async def sse_endpoint(request: Request, username: Annotated[str, Depends(authenticate)]):
-    """处理 SSE 连接"""
     return await sse_transport.handle_sse_request(request)
 
 @app.post("/messages")
 async def messages_endpoint(request: Request, username: Annotated[str, Depends(authenticate)]):
-    """处理 MCP 消息"""
     return await sse_transport.handle_post_request(request)
 
 if __name__ == "__main__":
     import uvicorn
-    # 强制监听 127.0.0.1 避免 IPv6 导致的 404 或连接问题
+    print(f"\n服务即将启动，认证模式: Basic Auth")
+    print(f"提示: 请在访问 http://127.0.0.1:8000/sse 时输入刚才设置的凭据。")
     uvicorn.run(app, host="127.0.0.1", port=8000)
